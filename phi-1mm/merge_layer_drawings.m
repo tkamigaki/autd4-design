@@ -1,8 +1,8 @@
-function merge_layer_drawings()
-% phi-1mm フォルダに保存して実行。
+function merge_layer_drawings_dxf_r12()
+% phi-1mm に保存。各層＋外形と全層＋外形をSCR・DXFで出力。
 % 登録済みの層のうち、SCRが存在するものだけ読み込む。
 % 未生成の層は名前とパスを表示してスキップする。SCRは再生成しない。
-% 入力の座標・円半径は変更しない。外形でのトリミングは行わない。
+% 外形の四隅だけを円で切り欠く。内部レイヤーは元の形状のまま重ねる。
 root = fileparts(mfilename('fullpath'));
 outline_file = fullfile(root,'..','outline-rectangle', ...
     'outline_rectangle_pattern_Emitter.scr');
@@ -42,17 +42,37 @@ for i = 1:numel(files)
     texts{i} = fileread(files{i});
     geometry{i} = read_geometry(texts{i},files{i});
 end
-output_dir = fullfile(root,'scr-merged');
+% 四隅の元の円を、外形につながる1/4円弧に置き換える。
+geometry{1} = trim_outline_corners(geometry{1});
+outline_points = geometry{1}.polygons{1};
+outline_min = min(outline_points,[],1);
+outline_max = max(outline_points,[],1);
+fprintf('外形寸法: 幅 %.3f mm × 高さ %.3f mm\n', outline_max-outline_min);
+fprintf('外形座標: X %.3f ～ %.3f mm、Y %.3f ～ %.3f mm\n', ...
+    outline_min(1),outline_max(1),outline_min(2),outline_max(2));
+
+texts{1} = ['_PLINE', newline, ...
+    sprintf('_NON %.8f,%.8f\n',outline_points.'), '_C'];
+
+output_dir = fullfile(root,'scr-merged-trimmed');
 if ~exist(output_dir,'dir'), mkdir(output_dir); end
+dxf_dir = fullfile(root,'dxf-merged-trimmed-r12');
+if ~exist(dxf_dir,'dir'), mkdir(dxf_dir); end
 
 % 各層＋外形、および全層＋外形のSCRを保存。
 for i = 1:n_layers
-    filename = fullfile(output_dir,[lower(names{i}) '_with_outline.scr']);
-    write_merged(filename,texts([1,i+1]), ...
-        [{'OUTLINE'},names(i)],[7,cad_colors(i)]);
+    stem = [lower(names{i}) '_with_outline'];
+    layer_names = [{'OUTLINE'},names(i)];
+    layer_colors = [7,cad_colors(i)];
+    write_merged(fullfile(output_dir,[stem '.scr']), ...
+        texts([1,i+1]),layer_names,layer_colors);
+    write_dxf(fullfile(dxf_dir,[stem '.dxf']), ...
+        geometry([1,i+1]),layer_names,layer_colors);
 end
 write_merged(fullfile(output_dir,'available_layers_with_outline.scr'), ...
     texts,[{'OUTLINE'},names],[7,cad_colors]);
+write_dxf(fullfile(dxf_dir,'available_layers_with_outline.dxf'), ...
+    geometry,[{'OUTLINE'},names],[7,cad_colors]);
 
 % 外形付きの各層を表示。
 for i = 1:n_layers
@@ -76,7 +96,47 @@ lgd = legend(ax,groups,[{'OUTLINE'},names],'Interpreter','none');
 lgd.ItemHitFcn = @toggle_layer;
 fprintf('出力先: %s\n',output_dir);
 fprintf('合成SCR: available_layers_with_outline.scr\n');
+fprintf('DXF出力先: %s\n',dxf_dir);
 fprintf('凡例クリックで各層の表示を切り替えられます。\n');
+end
+
+function geo = trim_outline_corners(geo)
+% 角の中心と半径は元の外形SCRにある4つのCIRCLEから取得する。
+assert(numel(geo.polygons) == 1 && size(geo.circles,1) == 4, ...
+    '外形SCRに閉じたポリライン1本と四隅の円4個が必要です。');
+vertices = geo.polygons{1};
+if isequal(vertices(1,:),vertices(end,:))
+    vertices(end,:) = [];
+end
+
+[found,corner_index] = ismember(geo.circles(:,1:2),vertices,'rows');
+assert(all(found) && numel(unique(corner_index)) == 4, ...
+    '四隅の円の中心が外形の頂点と一致しません。');
+n = size(vertices,1);
+parts = num2cell(vertices,2);
+dxf_parts = cellfun(@(p) [p,0],parts,'UniformOutput',false);
+segments = 64;
+for i = 1:numel(corner_index)
+    j = corner_index(i);
+    center = vertices(j,:);
+    radius = geo.circles(i,3);
+    incoming = vertices(mod(j-2,n)+1,:) - center;
+    outgoing = vertices(mod(j,n)+1,:) - center;
+    assert(norm(incoming) > radius && norm(outgoing) > radius, ...
+        '円の半径が隣接する辺に対して大きすぎます。');
+    incoming = incoming/norm(incoming);
+    outgoing = outgoing/norm(outgoing);
+    assert(abs(dot(incoming,outgoing)) < 1e-10, ...
+        '切り欠く外形の角は直角である必要があります。');
+    start_angle = atan2(incoming(2),incoming(1));
+    turn = sign(det([incoming;outgoing]))*pi/2;
+    angles = start_angle + linspace(0,turn,segments+1).';
+    parts{j} = center + radius*[cos(angles),sin(angles)];
+    dxf_parts{j} = [parts{j}(1,:),tan(turn/4); parts{j}(end,:),0];
+end
+geo.polygons{1} = vertcat(parts{:});
+geo.dxf_outline = vertcat(dxf_parts{:});
+geo.circles = zeros(0,3);
 end
 
 function geo = read_geometry(text,filename)
@@ -134,7 +194,59 @@ for i = 1:numel(texts)
         names{i},colors(i),names{i});
     fprintf(fid,'%s\n',strtrim(texts{i}));
 end
-fprintf(fid,'_ZOOM\n_Extents\n');
+fprintf(fid,'_ZOOM\n_Extents\n\n');
+fprintf('保存: %s\n',filename);
+end
+
+function write_dxf(filename,geometry,names,colors)
+% ASCII DXF R12。座標の数値は mm。ポリラインの 42 で真円弧を保持。
+% R12 のレイヤー名は31文字まで。
+names(strcmp(names,'CONDUCTIVE_LAYER_LOWER_ELECTRODE')) = {'COND_LAYER_LOWER_ELECTRODE'};
+fid = fopen(filename,'wb');
+assert(fid ~= -1,'DXFを開けません: %s',filename);
+cleanup = onCleanup(@() fclose(fid));
+fprintf(fid,['0\r\nSECTION\r\n2\r\nHEADER\r\n9\r\n$ACADVER\r\n1\r\nAC1009\r\n', ...
+    '9\r\n$LUNITS\r\n70\r\n2\r\n0\r\nENDSEC\r\n']);
+
+fprintf(fid,['0\r\nSECTION\r\n2\r\nTABLES\r\n0\r\nTABLE\r\n2\r\nLTYPE\r\n70\r\n1\r\n', ...
+    '0\r\nLTYPE\r\n2\r\nCONTINUOUS\r\n70\r\n0\r\n3\r\nSolid line\r\n72\r\n65\r\n', ...
+    '73\r\n0\r\n40\r\n0.0\r\n0\r\nENDTAB\r\n']);
+layer_names = [{'0'},names];
+layer_colors = [7,colors];
+fprintf(fid,'0\r\nTABLE\r\n2\r\nLAYER\r\n70\r\n%d\r\n',numel(layer_names));
+for i = 1:numel(layer_names)
+    fprintf(fid,'0\r\nLAYER\r\n2\r\n%s\r\n70\r\n0\r\n62\r\n%d\r\n6\r\nCONTINUOUS\r\n', ...
+        layer_names{i},layer_colors(i));
+end
+fprintf(fid,['0\r\nENDTAB\r\n0\r\nENDSEC\r\n0\r\nSECTION\r\n2\r\nBLOCKS\r\n', ...
+    '0\r\nENDSEC\r\n0\r\nSECTION\r\n2\r\nENTITIES\r\n']);
+
+for i = 1:numel(geometry)
+    geo = geometry{i};
+    layer = names{i};
+    if ~isempty(geo.circles)
+        circle_format = ['0\r\nCIRCLE\r\n8\r\n',layer, ...
+            '\r\n10\r\n%.15g\r\n20\r\n%.15g\r\n30\r\n0\r\n40\r\n%.15g\r\n'];
+        fprintf(fid,circle_format,geo.circles.');
+    end
+    vertex_format = ['0\r\nVERTEX\r\n8\r\n',layer, ...
+        '\r\n10\r\n%.15g\r\n20\r\n%.15g\r\n30\r\n0\r\n42\r\n%.15g\r\n70\r\n0\r\n'];
+    for j = 1:numel(geo.polygons)
+        if isfield(geo,'dxf_outline')
+            points = geo.dxf_outline;
+        else
+            xy = geo.polygons{j};
+            if isequal(xy(1,:),xy(end,:))
+                xy(end,:) = [];
+            end
+            points = [xy,zeros(size(xy,1),1)];
+        end
+        fprintf(fid,'0\r\nPOLYLINE\r\n8\r\n%s\r\n66\r\n1\r\n10\r\n0\r\n20\r\n0\r\n30\r\n0\r\n70\r\n1\r\n',layer);
+        fprintf(fid,vertex_format,points.');
+        fprintf(fid,'0\r\nSEQEND\r\n8\r\n%s\r\n',layer);
+    end
+end
+fprintf(fid,'0\r\nENDSEC\r\n0\r\nEOF\r\n');
 fprintf('保存: %s\n',filename);
 end
 
@@ -162,7 +274,12 @@ end
 end
 
 function finish_axes(ax,caption)
-axis(ax,'equal'); grid(ax,'on'); box(ax,'on');
+axis(ax,'equal');
+axis(ax,'tight');
+padding = [-3,3]; % 表示だけに加える余白 [mm]
+xlim(ax,xlim(ax) + padding);
+ylim(ax,ylim(ax) + padding);
+grid(ax,'on'); box(ax,'on');
 xlabel(ax,'X [mm]'); ylabel(ax,'Y [mm]');
 title(ax,caption,'Interpreter','none');
 end
