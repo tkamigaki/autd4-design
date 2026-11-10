@@ -2,21 +2,21 @@ function layout = generate_single_transducer(options)
 % 外形、各層、および重ね合わせ図を SCR / DXF R12 で出力する。
 % 寸法の初期値は以下で編集できる。*_um は µm、それ以外の寸法は mm。
 arguments
-    options.cell_size (1,1) double {mustBeFinite,mustBePositive} = 6
-    options.cell_pitch (1,1) double {mustBeFinite,mustBePositive} = 7
-    options.lower_hole_diameter_um (1,1) double {mustBeFinite,mustBePositive} = 70
-    options.lower_hole_pitch_um (1,1) double {mustBeFinite,mustBePositive} = 90
-    options.back_hole_size_um (1,1) double {mustBeFinite,mustBePositive} = 300
-    options.back_hole_pitch_um (1,1) double {mustBeFinite,mustBePositive} = 350
-    options.back_hole_count (1,2) double {mustBeFinite,mustBeInteger,mustBePositive} = [3,3]
+    options.cell_size (1,1) double {mustBeFinite,mustBePositive} = 6 % 正方形の一辺
+    options.cell_pitch (1,1) double {mustBeFinite,mustBePositive} = 7 % 正方形の中心間ピッチ
+    options.lower_hole_diameter_um (1,1) double {mustBeFinite,mustBePositive} = 70 % 下部電極の円穴径
+    options.lower_hole_pitch_um (1,1) double {mustBeFinite,mustBePositive} = 90 % 下部電極の穴ピッチ
+    options.back_hole_size_um (1,1) double {mustBeFinite,mustBePositive} = 300 % 背面層の穴の一辺
+    options.back_hole_pitch_um (1,1) double {mustBeFinite,mustBePositive} = 350 % 背面層の穴ピッチ
+    options.back_hole_count (1,2) double {mustBeFinite,mustBeInteger,mustBePositive} = [3,3] % 背面層の穴の数
     options.outline_file (1,1) string = fullfile(fileparts(mfilename('fullpath')), ...
         '..','outline-rectangle','outline_rectangle_pattern_Emitter.scr')
     options.output_dir (1,1) string = fullfile(fileparts(mfilename('fullpath')),'cad')
 end
 
-emitter_radius = 0.5;
-lower_conductive_radius = 0.55;
-cell_size = options.cell_size;
+emitter_radius = 0.5; % 発音体の半径
+lower_conductive_radius = 0.55; % 下部電極の導電層
+cell_size = options.cell_size; 
 cell_pitch = options.cell_pitch;
 lower_radius = options.lower_hole_diameter_um/2000;
 lower_pitch = options.lower_hole_pitch_um/1000;
