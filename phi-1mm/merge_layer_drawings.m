@@ -1,9 +1,17 @@
-function merge_layer_drawings_dxf_r12()
+function merge_layer_drawings()
+% 冒頭の設定を編集して実行する。距離と径の単位は mm。
 % phi-1mm に保存。各層＋外形と全層＋外形をSCR・DXFで出力。
 % 登録済みの層のうち、SCRが存在するものだけ読み込む。
 % 未生成の層は名前とパスを表示してスキップする。SCRは再生成しない。
 % 外形の四隅だけを円で切り欠く。内部レイヤーは元の形状のまま重ねる。
 root = fileparts(mfilename('fullpath'));
+% 穴付き版の配置 [mm]。径は左上で上から、右下で下からの順。
+add_corner_holes = true; % false にすると従来の穴なし図面を出力。
+diameters = [1.00 1.01 1.02 1.03 1.04];
+pitch = 5;
+side_inset = 2; % 左右共通。左列は外形左端から右へ、右列は中央の切り欠きの奥の縦辺から左へ測る距離 [mm]。
+top_inset = 8;  % 縦距離：左列の最上穴は上端から下へ、右列の最下穴は下端から上へ。
+group_inset = 2; % 中央の2×2穴セットの中心までの水平距離 [mm]。左端・右の切り欠き基準。
 outline_file = fullfile(root,'..','outline-rectangle', ...
     'outline_rectangle_pattern_Emitter.scr');
 input_files = {
@@ -54,6 +62,33 @@ fprintf('外形座標: X %.3f ～ %.3f mm、Y %.3f ～ %.3f mm\n', ...
 texts{1} = ['_PLINE', newline, ...
     sprintf('_NON %.8f,%.8f\n',outline_points.'), '_C'];
 
+if add_corner_holes
+    offset = (0:numel(diameters)-1).' * pitch;
+    radius = diameters(:)/2;
+    upper_left = [repmat(outline_min(1)+side_inset,size(offset)), ...
+        outline_max(2)-top_inset-offset, radius];
+    % 外形の高さ中央を横切る右側の縦辺を切り欠きの基準とする。
+    next_point = circshift(outline_points,-1,1);
+    mid_y = (outline_min(2)+outline_max(2))/2;
+    crosses_mid = (outline_points(:,2)>mid_y) ~= (next_point(:,2)>mid_y);
+    vertical = outline_points(:,1) == next_point(:,1);
+    notch_x = max(outline_points(vertical & crosses_mid,1));
+    assert(~isempty(notch_x) && notch_x > (outline_min(1)+outline_max(1))/2 ...
+        && notch_x < outline_max(1),'右側中央の切り欠きの縦辺が見つかりません。');
+    lower_right = [repmat(notch_x-side_inset,size(offset)), ...
+        outline_min(2)+top_inset+offset, radius];
+    hole_scr = sprintf('CIRCLE %.8f,%.8f %.8f\n',[upper_left;lower_right].');
+    group_centers = [outline_min(1)+group_inset, mid_y; notch_x-group_inset, mid_y];
+    for i = find(ismember(names,{'BACK_LAYER','LOWER_ELECTRODE'}))
+        group_scr = make_group_scr(root,names{i},group_centers);
+        extra_scr = [hole_scr,group_scr];
+        extra = read_geometry(extra_scr,names{i});
+        texts{i+1} = [strtrim(texts{i+1}),newline,extra_scr];
+        geometry{i+1}.circles = [geometry{i+1}.circles;extra.circles];
+        geometry{i+1}.polygons = [geometry{i+1}.polygons;extra.polygons];
+    end
+end
+
 output_dir = fullfile(root,'scr-merged-trimmed');
 if ~exist(output_dir,'dir'), mkdir(output_dir); end
 dxf_dir = fullfile(root,'dxf-merged-trimmed-r12');
@@ -98,6 +133,41 @@ fprintf('出力先: %s\n',output_dir);
 fprintf('合成SCR: available_layers_with_outline.scr\n');
 fprintf('DXF出力先: %s\n',dxf_dir);
 fprintf('凡例クリックで各層の表示を切り替えられます。\n');
+end
+
+function scr = make_group_scr(root,layer,group_centers)
+% 各層の生成スクリプト冒頭の寸法設定 [um] を読み、mm に換算する。
+source = fileread(fullfile(root,[lower(layer),'.m']));
+is_round = strcmp(layer,'LOWER_ELECTRODE');
+if is_round
+    radius = setting_mm(source,'hole_radius_um');
+    pitch = setting_mm(source,'hole_pitch_um');
+else
+    side = setting_mm(source,'square_size_um');
+    pitch = setting_mm(source,'square_pitch_um');
+end
+corners = [-1,-1; 1,-1; 1,1; -1,1];
+offsets = corners * (pitch/2);
+centers = [group_centers(1,:) + offsets; group_centers(2,:) + offsets];
+if is_round
+    circles = [centers,repmat(radius,size(centers,1),1)];
+    scr = sprintf('CIRCLE %.8f,%.8f %.8f\n',circles.');
+else
+    outlines = cell(size(centers,1),1);
+    for j = 1:numel(outlines)
+        vertices = centers(j,:) + corners * (side/2);
+        outlines{j} = ['PLINE',newline,sprintf('%.8f,%.8f\n',vertices.'),'C',newline];
+    end
+    scr = [outlines{:}];
+end
+end
+
+function value = setting_mm(source,name)
+% 寸法は各層の設定欄に数値で指定する（例：hole_pitch_um = 90;）。
+token = regexp(source,['(?m)^[ \t]*',name,'[ \t]*=[ \t]*([0-9.eE+-]+)[ \t]*;'],'tokens','once');
+assert(~isempty(token),'設定 %s の数値を読み取れません。',name);
+value = str2double(token{1})/1000;
+validateattributes(value,{'numeric'},{'scalar','positive','finite'});
 end
 
 function geo = trim_outline_corners(geo)

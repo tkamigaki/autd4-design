@@ -3,7 +3,7 @@ function layout = generate_single_transducer(options)
 % 寸法の初期値は以下で編集できる。*_um は µm、それ以外の寸法は mm。
 arguments
     options.cell_size (1,1) double {mustBeFinite,mustBePositive} = 6 % 正方形の一辺
-    options.cell_pitch (1,1) double {mustBeFinite,mustBePositive} = 7 % 正方形の中心間ピッチ
+    options.cell_pitch (1,1) double {mustBeFinite,mustBePositive} = 6 % 正方形の中心間ピッチ
     options.lower_hole_diameter_um (1,1) double {mustBeFinite,mustBePositive} = 70 % 下部電極の円穴径
     options.lower_hole_pitch_um (1,1) double {mustBeFinite,mustBePositive} = 90 % 下部電極の穴ピッチ
     options.back_hole_size_um (1,1) double {mustBeFinite,mustBePositive} = 300 % 背面層の穴の一辺
