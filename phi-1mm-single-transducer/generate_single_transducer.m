@@ -2,16 +2,23 @@ function layout = generate_single_transducer(options)
 % 外形、各層、および重ね合わせ図を SCR / DXF R12 で出力する。
 % 寸法の初期値は以下で編集できる。*_um は µm、それ以外の寸法は mm。
 arguments
-    options.cell_size (1,1) double {mustBeFinite,mustBePositive} = 6 % 正方形の一辺
-    options.cell_pitch (1,1) double {mustBeFinite,mustBePositive} = 6 % 正方形の中心間ピッチ
+    options.notched_outline (1,1) logical = false % false: 長方形、true: 四隅・右側に切り欠き
+    options.cell_size (1,1) double {mustBeFinite,mustBePositive} = 6.2 % 正方形の一辺
+    options.cell_pitch (1,1) double {mustBeFinite,mustBePositive} = 6.2 % 正方形の中心間ピッチ
     options.lower_hole_diameter_um (1,1) double {mustBeFinite,mustBePositive} = 70 % 下部電極の円穴径
     options.lower_hole_pitch_um (1,1) double {mustBeFinite,mustBePositive} = 90 % 下部電極の穴ピッチ
     options.back_hole_size_um (1,1) double {mustBeFinite,mustBePositive} = 300 % 背面層の穴の一辺
     options.back_hole_pitch_um (1,1) double {mustBeFinite,mustBePositive} = 350 % 背面層の穴ピッチ
     options.back_hole_count (1,2) double {mustBeFinite,mustBeInteger,mustBePositive} = [3,3] % 背面層の穴の数
+    options.add_corner_holes (1,1) logical = true % 端の列と中央の2×2セットを追加
+    options.diameters (1,:) double {mustBeFinite,mustBePositive} = [1.00 1.01 1.02 1.03 1.04]
+    options.pitch (1,1) double {mustBeFinite,mustBePositive} = 5 % 端の列の穴ピッチ
+    options.side_inset (1,1) double {mustBeFinite,mustBeNonnegative} = 2 % 左端・右の切り欠きから端の列まで
+    options.top_inset (1,1) double {mustBeFinite,mustBeNonnegative} = 8 % 上下端から最初の穴まで
+    options.group_inset (1,1) double {mustBeFinite,mustBeNonnegative} = 2 % 左端・右の切り欠きからセット中心まで
     options.outline_file (1,1) string = fullfile(fileparts(mfilename('fullpath')), ...
         '..','outline-rectangle','outline_rectangle_pattern_Emitter.scr')
-    options.output_dir (1,1) string = fullfile(fileparts(mfilename('fullpath')),'cad')
+    options.output_dir (1,1) string = "" % 省略時はこの .m ファイルと同じフォルダ
 end
 
 emitter_radius = 0.5; % 発音体の半径
@@ -31,10 +38,15 @@ assert(back_pitch > back_size,'背面層の穴ピッチは穴の一辺より大�
 back_span = (options.back_hole_count-1)*back_pitch + back_size;
 assert(all(back_span <= cell_size),'背面層の穴パターンが正方形に収まりません。');
 
-% 外周ポリラインの外接矩形を使い、右辺の凹みと四隅の円は反映しない。
-[outline_min,outline_max] = read_outline_bounds(options.outline_file);
-outline = [outline_min; outline_max(1),outline_min(2); ...
-    outline_max; outline_min(1),outline_max(2)];
+% マークの基準は元のSCRから取得し、出力する外形だけを切り替える。
+[outline_points,outline,dxf_outline] = read_outline(options.outline_file);
+outline_min = min(outline_points,[],1);
+outline_max = max(outline_points,[],1);
+if ~options.notched_outline
+    outline = [outline_min; outline_max(1),outline_min(2); ...
+        outline_max; outline_min(1),outline_max(2)];
+    dxf_outline = [outline,zeros(4,1)];
+end
 outline_center = (outline_min + outline_max)/2;
 tolerance = 1e-9;
 counts = floor((outline_max-outline_min-cell_size+tolerance)/cell_pitch)+1;
@@ -52,17 +64,44 @@ back_offsets = centered_grid(options.back_hole_count,back_pitch);
 lower_centers = translate_pattern(centers,lower_offsets);
 back_centers = translate_pattern(centers,back_offsets);
 
+% 追加穴の右側基準は元の外周から求める。
+common_holes = zeros(0,3);
+if options.add_corner_holes
+    mid_y = outline_center(2);
+    next_point = circshift(outline_points,-1,1);
+    crosses_mid = (outline_points(:,2)>mid_y) ~= (next_point(:,2)>mid_y);
+    vertical = outline_points(:,1) == next_point(:,1);
+    right_edge = max(outline_points(vertical & crosses_mid,1));
+    assert(~isempty(right_edge) && right_edge > outline_center(1), ...
+        '外形中央の右側に基準となる縦辺がありません。');
+    offsets = (0:numel(options.diameters)-1).' * options.pitch;
+    radii = options.diameters(:)/2;
+    common_holes = [repmat(outline_min(1)+options.side_inset,size(offsets)), ...
+        outline_max(2)-options.top_inset-offsets, radii;
+        repmat(right_edge-options.side_inset,size(offsets)), ...
+        outline_min(2)+options.top_inset+offsets, radii];
+
+    groups = [outline_min(1)+options.group_inset, mid_y; ...
+        right_edge-options.group_inset, mid_y];
+    lower_centers = [lower_centers; translate_pattern(groups,centered_grid([2,2],lower_pitch))];
+    back_centers = [back_centers; translate_pattern(groups,centered_grid([2,2],back_pitch))];
+end
+
 layers = [ ...
     make_layer('OUTLINE',7,[],{outline}), ...
     make_layer('CELL_GRID',8,[],squares(centers,cell_size)), ...
     make_layer('EMITTER',3,circles(centers,emitter_radius),{}), ...
-    make_layer('LOWER_ELECTRODE',1,circles(lower_centers,lower_radius),{}), ...
-    make_layer('BACK_LAYER',5,[],squares(back_centers,back_size)), ...
-    make_layer('COND_LAYER_LOWER_ELECTRODE',6,circles(centers,lower_conductive_radius),{}), ...
-    make_layer('CONDUCTIVE_LAYER_BACK_LAYER',2,[],{outline})];
+    make_layer('LOWER_ELECTRODE',1,[circles(lower_centers,lower_radius); common_holes],{}), ...
+    make_layer('BACK_LAYER',5,common_holes,squares(back_centers,back_size)), ...
+    make_layer('COND_LAYER_LOWER_ELECTRODE',6,circles(centers,lower_conductive_radius),{})];
+layers(1).dxf_outline = dxf_outline;
 
-scr_dir = fullfile(options.output_dir,'scr');
-dxf_dir = fullfile(options.output_dir,'dxf');
+output_dir = options.output_dir;
+if output_dir == ""
+    output_dir = string(fileparts(mfilename('fullpath')));
+end
+scr_dir = fullfile(output_dir,'scr');
+dxf_dir = fullfile(output_dir,'dxf');
 for folder = [scr_dir,dxf_dir]
     if ~isfolder(folder)
         [ok,message] = mkdir(folder);
@@ -83,13 +122,13 @@ layout = struct('grid_counts',counts,'emitter_centers',centers, ...
     'back_holes_per_emitter',size(back_offsets,1));
 fprintf('発音体: %d 個、下部電極: %d 穴/個、背面層: %d 穴/個\n', ...
     size(centers,1),layout.lower_holes_per_emitter,layout.back_holes_per_emitter);
-fprintf('出力先: %s\n',options.output_dir);
+fprintf('SCR出力先: %s\nDXF出力先: %s\n',scr_dir,dxf_dir);
 end
 
-function [bounds_min,bounds_max] = read_outline_bounds(filename)
+function [xy,outline,dxf_outline] = read_outline(filename)
 assert(isfile(filename),'外形SCRがありません: %s',filename);
-% CIRCLEは対象外。閉じたPLINEのXY座標だけを読む。
-parts = regexp(fileread(filename), ...
+source = fileread(filename);
+parts = regexp(source, ...
     '(?im)^[ \t]*_?PLINE\s+([\s\S]*?)\s+_?C(?:LOSE)?(?=\s|$)', ...
     'tokens','once');
 assert(~isempty(parts),'外形SCRに閉じたPLINEがありません: %s',filename);
@@ -101,10 +140,47 @@ for i = 1:numel(tokens)
     assert(numel(pair)==2,'外形SCRのXY座標が不正です: %s',tokens{i});
     xy(i,:) = str2double(pair);
 end
-bounds_min = min(xy,[],1);
-bounds_max = max(xy,[],1);
-assert(size(xy,1)>=3 && all(isfinite(xy(:))) && all(bounds_max>bounds_min), ...
+if isequal(xy(1,:),xy(end,:))
+    xy(end,:) = [];
+end
+assert(size(xy,1)>=3 && all(isfinite(xy(:))) && all(max(xy)>min(xy)), ...
     '外形SCRのポリラインが不正です: %s',filename);
+
+% phi-1mm と同じく、頂点にある円を1/4円の切り欠きに変換する。
+entries = regexp(source,'(?im)^\s*_?CIRCLE\s+(?:_NON\s+)?(\S+)\s+(\S+)','tokens');
+corner_circles = zeros(numel(entries),3);
+for i = 1:numel(entries)
+    center = sscanf(entries{i}{1},'%f,%f');
+    radius = str2double(entries{i}{2});
+    assert(numel(center)==2 && isfinite(radius) && radius>0,'外形SCRの円が不正です。');
+    corner_circles(i,:) = [center.',radius];
+end
+[found,corner_index] = ismember(corner_circles(:,1:2),xy,'rows');
+assert(all(found) && numel(unique(corner_index))==numel(entries),'外形SCRの円と頂点が一致しません。');
+n = size(xy,1);
+parts = num2cell(xy,2);
+dxf_parts = cellfun(@(p) [p,0],parts,'UniformOutput',false);
+segments = 64;
+for i = 1:numel(corner_index)
+    j = corner_index(i);
+    center = xy(j,:);
+    radius = corner_circles(i,3);
+    incoming = xy(mod(j-2,n)+1,:) - center;
+    outgoing = xy(mod(j,n)+1,:) - center;
+    assert(norm(incoming) > radius && norm(outgoing) > radius, ...
+        '円の半径が隣接する辺に対して大きすぎます。');
+    incoming = incoming/norm(incoming);
+    outgoing = outgoing/norm(outgoing);
+    assert(abs(dot(incoming,outgoing)) < 1e-10, ...
+        '切り欠く外形の角は直角である必要があります。');
+    start_angle = atan2(incoming(2),incoming(1));
+    turn = sign(det([incoming;outgoing]))*pi/2;
+    angles = start_angle + linspace(0,turn,segments+1).';
+    parts{j} = center + radius*[cos(angles),sin(angles)];
+    dxf_parts{j} = [parts{j}(1,:),tan(turn/4); parts{j}(end,:),0];
+end
+outline = vertcat(parts{:});
+dxf_outline = vertcat(dxf_parts{:});
 end
 
 function xy = centered_grid(counts,pitch)
@@ -130,7 +206,7 @@ end
 
 function layer = make_layer(name,color,circle_data,polygons)
 layer = struct('name',string(name),'color',color, ...
-    'circles',circle_data,'polygons',{polygons});
+    'circles',circle_data,'polygons',{polygons},'dxf_outline',[]);
 end
 
 function write_scr(filename,layers)
@@ -177,7 +253,11 @@ for layer = layers
     vertex_format = ['0\nVERTEX\n8\n',name,'\n10\n%.15g\n20\n%.15g\n30\n0\n'];
     for i = 1:numel(layer.polygons)
         fprintf(fid,'0\nPOLYLINE\n8\n%s\n66\n1\n10\n0\n20\n0\n30\n0\n70\n1\n',name);
-        fprintf(fid,vertex_format,layer.polygons{i}.');
+        if isempty(layer.dxf_outline)
+            fprintf(fid,vertex_format,layer.polygons{i}.');
+        else
+            fprintf(fid,[vertex_format,'42\n%.15g\n'],layer.dxf_outline.');
+        end
         fprintf(fid,'0\nSEQEND\n8\n%s\n',name);
     end
 end
