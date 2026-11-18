@@ -36,6 +36,7 @@ search.fine_step = 0.002;     % 中点の局所精査ピッチ [mm]
 search.angle_degrees = [0,30,45,60,90,120,135,150];
 search.fine_angle_step = 1;   % 局所精査の角度ピッチ [deg]
 search.fine_angle_range = 5;  % 最良方向の前後を精査 [deg]
+mirror_axis_x = 2.5;         % 発音体外形の左右端 (-49.4, 54.4) の中点 [mm]
 curve_tolerance_um = 0.1;    % 曲線をPLINE化するときの最大弦誤差
 
 %% 設定確認
@@ -148,8 +149,17 @@ assert(min(pattern_gaps)>=required_pattern_gap-1e-8, ...
 %% CAD出力（輪郭/ビア/接着層を分ける）
 output_folder = fullfile(root,'scr-conductive-layer-back-layer');
 if ~exist(output_folder,'dir'),mkdir(output_folder);end
+[x,y] = boundary(body);
+vertices = [x,y];
+assert(all(isfinite(vertices),'all'),'輪郭に複数の境界があります。');
+if norm(vertices(1,:)-vertices(end,:))<1e-10,vertices(end,:)=[];end
+% 全層の位置合わせには設計時の向き、単独で使用する図面には鏡像を使う。
+write_patterns(fullfile(output_folder,'conductive_layer_back_layer_reverse.scr'), ...
+    vertices,hex_centers);
+mirrored_centers = hex_centers;
+mirrored_centers(:,1) = 2*mirror_axis_x - hex_centers(:,1);
 write_patterns(fullfile(output_folder,'conductive_layer_back_layer.scr'), ...
-    body,hex_centers);
+    [-vertices(:,1),vertices(:,2)],mirrored_centers);
 write_circles(fullfile(output_folder,'substrate_via.scr'),via_centers,via_radius);
 write_circles(fullfile(output_folder,'adhesive_via_openings.scr'), ...
     adhesive_centers,adhesive_radius);
@@ -243,12 +253,9 @@ for first = 1:100:size(points,1)
 end
 end
 
-function write_patterns(filename,body,centers)
+function write_patterns(filename,vertices,centers)
 fid = fopen(filename,'w');assert(fid~=-1,'出力を開けません: %s',filename);
 cleanup = onCleanup(@() fclose(fid));
-[x,y] = boundary(body);vertices = [x,y];
-assert(all(isfinite(vertices),'all'),'輪郭に複数の境界があります。');
-if norm(vertices(1,:)-vertices(end,:))<1e-10,vertices(end,:)=[];end
 for i = 1:size(centers,1)
     fprintf(fid,'PLINE\n');
     fprintf(fid,'%.10f,%.10f\n',(vertices+centers(i,:)).');

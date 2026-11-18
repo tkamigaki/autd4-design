@@ -26,6 +26,12 @@ input_files = {
 names = {'BACK_LAYER','EMITTER','LOWER_ELECTRODE','CONDUCTIVE_LAYER_LOWER_ELECTRODE','CONDUCTIVE_LAYER_BACK_LAYER','SUBSTRATE_VIA','ADHESIVE_VIA_OPENINGS'};
 colors = [0.10 0.45 0.90; 0.15 0.65 0.25; 0.90 0.20 0.15; 0.65 0.20 0.80; 0.95 0.55 0.10;0.10 0.70 0.75;0.60 0.35 0.10];
 cad_colors = [5,3,1,6,2,4,30];
+% 内部の図形は設計時の向きで統一。旧形式のSCRも同じ向きで読める。
+idx = find(strcmp(names,'CONDUCTIVE_LAYER_BACK_LAYER'));
+design_file = fullfile(fileparts(input_files{idx}),'conductive_layer_back_layer_reverse.scr');
+if isfile(design_file)
+    input_files{idx} = design_file;
+end
 % 存在する層を自動選択。外形は従来どおり必要。
 assert(isfile(outline_file),'外形SCRがありません: %s',outline_file);
 available = cellfun(@isfile,input_files);
@@ -99,10 +105,18 @@ for i = 1:n_layers
     stem = [lower(names{i}) '_with_outline'];
     layer_names = [{'OUTLINE'},names(i)];
     layer_colors = [7,cad_colors(i)];
-    write_merged(fullfile(output_dir,[stem '.scr']), ...
-        texts([1,i+1]),layer_names,layer_colors);
-    write_dxf(fullfile(dxf_dir,[stem '.dxf']), ...
-        geometry([1,i+1]),layer_names,layer_colors);
+    pair_text = texts([1,i+1]);
+    pair_geo = geometry([1,i+1]);
+    if strcmp(names{i},'CONDUCTIVE_LAYER_BACK_LAYER')
+        % 設計時の組をそのまま保存し、最終使用版では組全体を同じ軸で反転。
+        write_merged(fullfile(output_dir,[stem '_reverse.scr']),pair_text,layer_names,layer_colors);
+        write_dxf(fullfile(dxf_dir,[stem '_reverse.dxf']),pair_geo,layer_names,layer_colors);
+        for j = 1:numel(pair_geo)
+            [pair_geo{j},pair_text{j}] = mirror_contours(pair_geo{j},outline_min(1)+outline_max(1));
+        end
+    end
+    write_merged(fullfile(output_dir,[stem '.scr']),pair_text,layer_names,layer_colors);
+    write_dxf(fullfile(dxf_dir,[stem '.dxf']),pair_geo,layer_names,layer_colors);
 end
 write_merged(fullfile(output_dir,'available_layers_with_outline.scr'), ...
     texts,[{'OUTLINE'},names],[7,cad_colors]);
@@ -133,6 +147,23 @@ fprintf('出力先: %s\n',output_dir);
 fprintf('合成SCR: available_layers_with_outline.scr\n');
 fprintf('DXF出力先: %s\n',dxf_dir);
 fprintf('凡例クリックで各層の表示を切り替えられます。\n');
+end
+
+function [geo,scr] = mirror_contours(geo,x_sum)
+% 外形・背面導電層はいずれも閉じた輪郭。DXFの円弧は反射で回転方向が逆になる。
+assert(isempty(geo.circles),'外形・背面導電層には輪郭ポリラインが必要です。');
+parts = cell(size(geo.polygons));
+for i = 1:numel(parts)
+    xy = geo.polygons{i};
+    xy(:,1) = x_sum-xy(:,1);
+    geo.polygons{i} = xy;
+    parts{i} = ['_PLINE',newline,sprintf('_NON %.10f,%.10f\n',xy.'),'_C',newline];
+end
+scr = [parts{:}];
+if isfield(geo,'dxf_outline')
+    geo.dxf_outline(:,1) = x_sum-geo.dxf_outline(:,1);
+    geo.dxf_outline(:,3) = -geo.dxf_outline(:,3);
+end
 end
 
 function scr = make_group_scr(root,layer,group_centers)

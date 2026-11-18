@@ -58,6 +58,13 @@ merge_layer_drawings
 
 `conductive_layer_back_layer` は、発音体 SCR があれば中心と半径を照合する。整合性を確認する場合は `emitter_positions` を先に実行すること。発音体 SCR が未生成の場合は設定値から配置を計算する。
 
+背面導電層の生成時に出力する以下の SCR は、導電層の輪郭のみを含む。MATLAB の個別表示・全層表示、全層の SCR / DXF は設計時の向きでそろえる。ビア・接着層用開口は設計時の座標を使用する。
+
+| SCR | 導電層の向き | 用途 |
+| --- | --- | --- |
+| `conductive_layer_back_layer.scr` | 外形中央の X = 2.5 mm を軸に左右反転 | 接尾辞なしの個別図面 |
+| `conductive_layer_back_layer_reverse.scr` | 反転前の設計時の向き | 個別図面（`_with_outline_reverse`）および全層の重ね合わせ |
+
 ### 外形との合成
 
 `merge_layer_drawings` は `outline-rectangle/outline_rectangle_pattern_Emitter.scr` を読み込み、右辺中央のコの字切り欠きを含む外周と、四隅の円弧を合成する。
@@ -68,6 +75,14 @@ merge_layer_drawings
 | --- | --- | --- |
 | 各層と外形 | `scr-merged-trimmed/<層名>_with_outline.scr` | `dxf-merged-trimmed-r12/<層名>_with_outline.dxf` |
 | 読み込めた全層と外形 | `scr-merged-trimmed/available_layers_with_outline.scr` | `dxf-merged-trimmed-r12/available_layers_with_outline.dxf` |
+
+背面導電層の外形付き図面は、次のファイル名で SCR / DXF を出力する。
+
+| ファイル名（拡張子を除く） | 導電層と基板外形の向き | コの字切り欠き |
+| --- | --- | --- |
+| `conductive_layer_back_layer_with_outline`（最終使用版） | 両方を外形中央の X = 2.5 mm を軸に左右反転 | 左側 |
+| `conductive_layer_back_layer_with_outline_reverse` | 両方とも設計時の向き | 右側 |
+| `available_layers_with_outline`（全層） | 両方とも設計時の向き | 右側 |
 
 全層の確認図では、凡例をクリックして各レイヤーの表示を切り替えられる。`mask_gap_resist.scr` は合成対象に含まれていないため、個別に扱う。
 
