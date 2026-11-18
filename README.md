@@ -13,7 +13,7 @@ AUTD4 のフェーズドアレイ図面とデバッグ用図面を生成する M
 
 ## 使用環境
 
-- MATLAB（スクリプト内のローカル関数に対応したバージョン。単体発音体版では `arguments` ブロックによる名前付き引数にも対応していること）
+- MATLAB（スクリプト内のローカル関数に対応したバージョン。
 - AutoCAD など、出力された SCR のコマンドを実行できる CAD ソフト
 - DWG / DXF の閲覧・編集には、それぞれの形式に対応した CAD ソフト
 
@@ -60,7 +60,7 @@ merge_layer_drawings
 
 ### 外形との合成
 
-`merge_layer_drawings` は `outline-rectangle/outline_rectangle_pattern_Emitter.scr` を読み込み、外形の四隅を円弧で切り欠く。
+`merge_layer_drawings` は `outline-rectangle/outline_rectangle_pattern_Emitter.scr` を読み込み、右辺中央のコの字切り欠きを含む外周と、四隅の円弧を合成する。
 
 登録された層のうち SCR が存在するものだけを合成し、未生成の層はスキップする。
 
@@ -69,17 +69,35 @@ merge_layer_drawings
 | 各層と外形 | `scr-merged-trimmed/<層名>_with_outline.scr` | `dxf-merged-trimmed-r12/<層名>_with_outline.dxf` |
 | 読み込めた全層と外形 | `scr-merged-trimmed/available_layers_with_outline.scr` | `dxf-merged-trimmed-r12/available_layers_with_outline.dxf` |
 
-全層の確認図では、凡例をクリックして各レイヤーの表示を切り替えられます。`mask_gap_resist.scr` は合成対象に含まれていないため、個別に扱います。
+全層の確認図では、凡例をクリックして各レイヤーの表示を切り替えられる。`mask_gap_resist.scr` は合成対象に含まれていないため、個別に扱う。
+
+### アライメントマーク（φ1 mm アレイ版・単体発音体版共通）
+
+下部電極と背面層に次のマークを追加する。設定箇所はアレイ版が `merge_layer_drawings.m`、単体発音体版が `generate_single_transducer.m` の冒頭。`add_corner_holes` の初期値は `true`。`false` で両方のマークを省略する。
+
+| マーク | 初期配置 |
+| --- | --- |
+| 左上・右下の円穴列 | 各5穴。左上は上から、右下は下から順に φ1.00、1.01、1.02、1.03、1.04 mm。縦ピッチ 5 mm、最初の穴中心は上端・下端からそれぞれ 8 mm |
+| 左右中央の 2 × 2 穴 | 各4穴。セット中心は外形の高さの中央。下部電極は円穴、背面層は角穴とし、それぞれの層の穴寸法・ピッチを使う。両層でセット中心が一致する |
+
+横位置の基準は左側が外形左端、右側が元の外形 SCR にあるコの字切り欠きの奥の縦辺。基準から内側への距離は、円穴列が `side_inset`、2 × 2 セット中心が `group_inset`（ともに初期値 2 mm）。
 
 ## φ1 mm 単体発音体版
 
-6 mm 角の中心に φ1 mm の発音体を1個ずつ配置する。初期値は中心間ピッチ 7 mm（隙間 1 mm）で、横14列 × 縦11行の計154個。
+6.2 mm 角のチップ中心に φ1 mm の発音体を1個ずつ配置する。初期値は中心間ピッチ 6.2 mm（隙間 0 mm）。103.8 × 76 mm の外接矩形の中央に横16列 × 縦12行、計192個を配置する。配置数は外接矩形から算出し、切り欠きやマークに重なるチップも出力対象に含む。
 
-下部電極の円穴、背面層の正方形穴、下部電極側の導電層は φ1 mm アレイ版と同じ形状。
+下部電極は φ70 µm の円穴を 90 µm ピッチで配置し、穴全体が発音体の円内に収まるものを採用する。背面層は一辺 300 µm の正方形穴を 350 µm ピッチで 3 × 3 個配置する。下部電極側の導電層は φ1.1 mm の円。背面側の導電層は全面ベタのため出力を省略する。
 
-背面側の導電層はベタ。
+### 外形の切り替え
 
-外形は `outline-rectangle/outline_rectangle_pattern_Emitter.scr` の外周ポリラインから読み取った外接矩形（103.8 × 76 mm）で、四隅の円形切り欠きは省略された形状。
+`generate_single_transducer.m` 冒頭の `options.notched_outline` で出力する外形を選択する。
+
+| 値 | 外形 |
+| --- | --- |
+| `false`（初期値） | 103.8 × 76 mm の長方形 |
+| `true` | アレイ版と同じ、四隅の円弧と右辺中央のコの字切り欠きを含む外形 |
+
+どちらの設定でもチップ格子とアライメントマークの位置は共通。
 
 ### 実行方法
 
@@ -90,7 +108,7 @@ cd phi-1mm-single-transducer
 generate_single_transducer
 ```
 
-各層と外形を重ねた図面、および全層を重ねた `available_layers_with_outline` を `cad/scr/` と `cad/dxf/` に出力する。
+各層と外形を重ねた図面、および全層を重ねた `available_layers_with_outline` を生成する。既定の出力先は `generate_single_transducer.m` と同じフォルダ内の `scr/` と `dxf/`。
 
 正方形の一辺と中心間ピッチ、下部電極の円穴径とピッチ、背面層の正方形穴の一辺・ピッチ・縦横の個数は、`generate_single_transducer.m` の冒頭で変更できる。
 
