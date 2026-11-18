@@ -5,3 +5,6 @@
 .LSOverride
 .Spotlight-V100/
 .Trashes/
+*.scr
+*.dxf
+!/outline-rectangle/outline_rectangle_pattern_Emitter.scr
